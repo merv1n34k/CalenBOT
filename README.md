@@ -1,5 +1,7 @@
 # CalenBOT
 
+***ATTENTION!!*** **This project in only in it's alpha version, many things are broken and won't work as expected! The stable version could be released in a few weeks**
+
 A telegram bot for use in groups to send a scheduled messages such as your university's lessons schedule or any other schedules
 
 ## Requirements
@@ -9,7 +11,7 @@ A telegram bot for use in groups to send a scheduled messages such as your unive
 2. To run this telegram bot, so you will need:
 
     * [Python](https://www.python.org/) >=3.8
-    * [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) >= 20.0.0 (You can use only 20+ versions!) -asynchronous interface for the Telegram Bot API, written in Python
+    * [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) >= 20.0.0 (You can use only 20+ versions!) - asynchronous interface for the Telegram Bot API, written in Python
         * [JobQueue](https://docs.python-telegram-bot.org/en/v20.5/telegram.ext.jobqueue.html) - python-telegram-bot dependency for running scheduled commands
 
 ## Config
@@ -35,17 +37,9 @@ python -m bot_core [-v] [-f] [-s]
 
 where options `-v`, `-f` and `-s` stand for `verbose`, `forced` and `strict` respectively.
 
-verbose
-
-: increase verbosity
-
-forced
-
-: answer `y` for every prompt
-
-strict
-
-: raise an error if you directory and/or files are missing, otherwive will create them automatically
+* `verbose`: increase verbosity
+* `forced`: answer `y` for every prompt
+* `strict`: raise an error if you directory and/or files are missing, otherwise will create them automatically
 
 ## License
 
