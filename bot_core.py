@@ -11,7 +11,7 @@ bot.
 # Importing General modules
 import asyncio
 import argparse
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 
 # Importing Project-specific modules
 
@@ -50,8 +50,6 @@ parser = argparse.ArgumentParser(description="There should be a help intro.",
 parser.add_argument("-f", "--forced", action="store_true", help="forced mode")
 parser.add_argument("-v", "--verbose", action="store_true", help="increase verbosity")
 parser.add_argument("-s", "--strict", action="store_true", help="strict mode")
-parser.add_argument("-d", "--schedule", action="store_true",
-                    help="activate scheduler for certain group")
 
 args = parser.parse_args()
 
@@ -60,14 +58,17 @@ class BotSession:
         self.overlord = int(config.OVERLORD_USER_ID)
 
         self.user_time_stamps = {}
+        self.scheduled_job = None
         self.request_time = config.REQUEST_TIME
         self.max_request = config.MAX_REQUEST
 
         self.respond = True # Do not respond to user requests
         self.use_info = False # Print extra info for each schedule requests
 
-        self.schedule_time = config.SCHEDULE_TIME
-        self.current_group = -1001772612400
+        self.interval = config.INTERVAL
+        self.first = config.FIRST
+
+        self.current_group = None
 
     def init_db(self):
         # initiate db handler
@@ -102,7 +103,6 @@ async def check_group(update: Update, context: CallbackContext) -> bool:
         print(user_id, chat_id)
         await context.bot.send_message(update.effective_chat.id,"You're not authorized to use this bot.")
         return False
-    c_session.current_group = chat_id
     return True
 
 async def rate_limit(update: Update, context: CallbackContext) -> bool:
@@ -128,6 +128,7 @@ async def rate_limit(update: Update, context: CallbackContext) -> bool:
 async def add_group(update,context):
     """Add group to group_data by its chat_id."""
     if update.message.from_user.id != c_session.overlord:
+        unknown(update, context)
         return
     chat_id = update.message.chat_id
     group_db = dbh.load_db("group_data")
@@ -142,6 +143,7 @@ async def add_group(update,context):
 async def remove_group(update,context):
     """Move group info to removed_data by its chat_id."""
     if update.message.from_user.id != c_session.overlord:
+        unknown(update, context)
         return
     chat_id = update.message.chat_id
     group_db = dbh.load_db("group_data")
@@ -157,6 +159,7 @@ async def remove_group(update,context):
 
 async def toggle_respond(update: Update, context: CallbackContext) -> None:
     if update.message.from_user.id != c_session.overlord:
+        unknown(update, context)
         return
     respond = c_session.respond
     respond = not respond
@@ -167,6 +170,7 @@ async def toggle_respond(update: Update, context: CallbackContext) -> None:
 
 async def toggle_info(update: Update, context: CallbackContext) -> None:
     if update.message.from_user.id != c_session.overlord:
+        unknown(update, context)
         return
     use_info = c_session.use_info
     use_info = not use_info
@@ -174,18 +178,6 @@ async def toggle_info(update: Update, context: CallbackContext) -> None:
     status = "verbose" if use_info else "no info"
     bot_logger.log_action("bot handler", f"Overlord has toggled {status} mode")
     await context.bot.send_message(update.effective_chat.id,f"Changed to {status} mode!")
-
-async def callback_send_message(context: CallbackContext) -> None:
-    """Reply a info about current lesson."""
-    chat_id = c_session.get_chat_id()
-    if not chat_id:
-        return
-    if c_session.use_info:
-        info = True
-    else:
-        info = False
-    w,d,l = schedule.get_current_time()
-    await context.bot.send_message(c_session.get_chat_id(),schedule.form_message(1,with_link=1,info=info,w=w,d=d,l=l),disable_web_page_preview=True)
 
 async def handle_message(update: Update, context: CallbackContext) -> bool:
     user_id = update.message.from_user.id
@@ -251,6 +243,46 @@ async def unknown(update: Update, context: CallbackContext) -> None:
         text="Sorry, I didn't understand that command.",
     )
 
+async def start_scheduler(update: Update, context: CallbackContext) -> None:
+    if update.message.from_user.id != c_session.overlord:
+        unknown(update, context)
+        return
+    c_session.current_group = update.message.chat_id
+    if c_session.scheduled_job is None:
+        c_session.scheduled_job = context.job_queue.run_repeating(callback_send_message, first=c_session.first, interval=c_session.interval * 1)
+        await context.bot.send_message(update.effective_chat.id,"Scheduler is started")
+        bot_logger.log_action("bot handler","Overlord has started a scheduler")
+    else:
+        await context.bot.send_message(update.effective_chat.id,"Scheduler is already running.")
+
+async def callback_send_message(context: CallbackContext) -> None:
+    """Reply a info about current lesson."""
+    chat_id = c_session.get_chat_id()
+    if not chat_id:
+        return
+    if c_session.use_info:
+        info = True
+    else:
+        info = False
+    w,d,l = schedule.get_current_time()
+    message = schedule.form_message(0,with_link=1,info=info,w=w,d=d,l=l)
+    if message:
+        await context.bot.send_message(c_session.get_chat_id(),message,disable_web_page_preview=True)
+    else:
+        await context.bot.send_message(c_session.get_chat_id(),"Пари не буде")
+
+async def stop_scheduler(update: Update, context: CallbackContext) -> None:
+    if update.message.from_user.id != c_session.overlord:
+        unknown(update, context)
+        return
+    if c_session.scheduled_job is not None:
+        c_session.scheduled_job.schedule_removal()
+        c_session.scheduled_job = None
+        await context.bot.send_message(update.effective_chat.id,"Scheduler stopped.")
+        bot_logger.log_action("bot handler","Overlord has stopped a scheduler")
+    else:
+        await context.bot.send_message(update.effective_chat.id,"Scheduler is not running.")
+
 def main() -> None:
 
     c_session.init_db()
@@ -266,6 +298,9 @@ def main() -> None:
     toggle_info_handler = CommandHandler("verbose", toggle_info)
     add_group_handler = CommandHandler("addThisGroup", add_group)
     remove_group_handler = CommandHandler("removeThisGroup", remove_group)
+    start_scheduler_handler = CommandHandler("start",start_scheduler)
+    stop_scheduler_handler = CommandHandler("stop",stop_scheduler)
+
     #sch_all_handler = CommandHandler("all", schedule_all)
 
     # Add handlers
@@ -276,14 +311,12 @@ def main() -> None:
     app.add_handler(toggle_info_handler)
     app.add_handler(add_group_handler)
     app.add_handler(remove_group_handler)
+    app.add_handler(start_scheduler_handler)
+    app.add_handler(stop_scheduler_handler)
     #app.add_handler(sch_all_handler)
 
     # This must be the last handler!!!!!
     app.add_handler(unknown_handler)
-
-    # Set up job queue
-    if args.schedule:
-        app.job_queue.run_repeating(callback_send_message, first=time(8,25), interval=c_session.schedule_time * 1, last=time(18,25))
 
     app.run_polling()
 

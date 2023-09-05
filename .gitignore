@@ -7,3 +7,9 @@
 config.py
 
 data/
+
+# Ignore __pycache__ and logs
+
+__pycache__/
+
+*.log

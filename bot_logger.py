@@ -5,7 +5,7 @@ logging.basicConfig(
     format="%(asctime)s %(message)s",
     datefmt="%m/%d %H:%M:%S",
     handlers=[
-        logging.FileHandler("bot_main.log"),
+        logging.FileHandler("bot.log"),
         logging.StreamHandler()
     ]
 )
