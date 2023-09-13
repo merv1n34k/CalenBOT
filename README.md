@@ -2,7 +2,7 @@
 
 ***ATTENTION!!*** **This project in only in it's alpha version, many things are broken and won't work as expected! The stable version could be released in a few weeks**
 
-A telegram bot for use in groups to send a scheduled messages such as your university's lessons schedule or any other schedules
+A telegram bot for use in groups to send a scheduled messages such as your university's lessons schedule
 
 ## Requirements
 
@@ -14,35 +14,41 @@ A telegram bot for use in groups to send a scheduled messages such as your unive
     * [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) >= 20.0.0 (You can use only 20+ versions!) - asynchronous interface for the Telegram Bot API, written in Python
         * [JobQueue](https://docs.python-telegram-bot.org/en/v20.5/telegram.ext.jobqueue.html) - python-telegram-bot dependency for running scheduled commands
 
-## Config
-
-All configuration can be done in a `config.py` file, see `example_config.py` where you can simply put your desired values, or use default ones.
-
-However, in config you **must* provide your bot's *AUTH_TOKEN* and *user_id* of a person who will control the bot (e.g. `/addThisGroup` to allow bot work in group you are sending this command)
-
-Also, you will need to provide a parameters for a schedule, such as:
-
-* List of time of the events
-* List of names of the events and other (see `example_config.py` for all parameters)
-
 ## How to use
 
 To make this bot work in groups you will need to add your bot as administrator of the group and it should have permission to send messages.
 
-To activate bot you should have a `config.py` file with all parameters and run the following command in your terminal (example for *NIX systems),
+To activate bot you should have a `config.py` file with all required parameters (see configuration) and run the following command (example for *NIX systems):
 
 ```bash
-python -m bot_core [-v] [-f] [-s]
+python -m core [-f]
 ```
 
-where options `-v`, `-f` and `-s` stand for `verbose`, `forced` and `strict` respectively.
+where option `-f`  stand --`fill-none-values`, which will prompt to fill missing values for some schedule info as links, or teacher's info.
 
-* `verbose`: increase verbosity
-* `forced`: answer `y` for every prompt
-* `strict`: raise an error if you directory and/or files are missing, otherwise will create them automatically
+## Config
+
+All configuration should be done in a `config.py` file, see `example_config.py` where you can simply put your desired values, or use default ones. So, to set up configuration on *NIX systems you can run:
+
+```bash
+cp example_config.py config.py
+```
+
+And set all your config in this file. In particural, for this bot to work you must provide the following values:
+* AUTH_TOKEN: your bot token
+* OVERLORD_USER_ID: the user_id of a person who may control the bot
+* URL: the url for the website with your schedule in <table> tags
+
+Other parameters are are set by default, but may change them if you need to. (see example_config.py for all available parameters)
 
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
+## ROADMAP
+
+* [X] make a proper format messages
+* [X] fix scheduler and user commands
+* [ ] fix `check_none` function
+* [ ] CLEANUP, REFACTORING and DOCUMENTATION
 
