@@ -1,8 +1,6 @@
 # CalenBOT
 
-***ATTENTION!!*** **This project in only in it's alpha version, many things are broken and won't work as expected! The stable version could be released in a few weeks**
-
-A telegram bot for use in groups to send a scheduled messages such as your university's lessons schedule
+A telegram bot for groups to send repetitive scheduled messages, such as your university's lessons schedule
 
 ## Requirements
 
@@ -21,10 +19,10 @@ To make this bot work in groups you will need to add your bot as administrator o
 To activate bot you should have a `config.py` file with all required parameters (see configuration) and run the following command (example for *NIX systems):
 
 ```bash
-python -m core [-f]
+python -m core [-f] [--fill-none-values]
 ```
 
-where option `-f`  stand --`fill-none-values`, which will prompt to fill missing values for some schedule info as links, or teacher's info.
+where option `-f`  stand `--fill-none-values`, which will prompt to fill missing values for some schedule info, such as links or teacher's info.
 
 ## Config
 
@@ -36,10 +34,10 @@ cp example_config.py config.py
 
 And set all your config in this file. In particural, for this bot to work you must provide the following values:
 * AUTH_TOKEN: your bot token
-* OVERLORD_USER_ID: the user_id of a person who may control the bot
+* ADMIN_USER_ID: (str or list) the user_id of a person who may control the bot or list of users
 * URL: the url for the website with your schedule in <table> tags
 
-Other parameters are are set by default, but may change them if you need to. (see example_config.py for all available parameters)
+Other parameters are set by default, but you can change them if you need to. (see `example_config.py` for all available parameters)
 
 ## License
 
@@ -50,5 +48,10 @@ Distributed under the MIT License. See `LICENSE` for more information.
 * [X] make a proper format messages
 * [X] fix scheduler and user commands
 * [ ] fix `check_none` function
+* [ ] add welcome message
+* [ ] add option to specify multiple admins
+* [ ] update fetch_schedule so it is less prone to errors
+* [ ] make custom menu commands for admins
+* [ ] make group-broad request limits
 * [ ] CLEANUP, REFACTORING and DOCUMENTATION
 
