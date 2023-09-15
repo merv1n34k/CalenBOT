@@ -69,10 +69,11 @@ class BotSession:
         # If chat_id in group_data then return it,
         # else return False
         chat_id = chat_id if chat_id else str(self.current_group)
-        print(chat_id)
+        #print(chat_id)
         group_db = group_handler.get_approved_groups()
-        if chat_id not in group_db.keys():
+        if str(chat_id) not in group_db.keys():
             return False
+        self.current_group = chat_id
         return self.current_group
 
 c_session = BotSession()
@@ -148,7 +149,7 @@ async def toggle_info(update: Update, context: CallbackContext) -> None:
 
 async def handle_message(update: Update, context: CallbackContext) -> bool:
     user_id = update.message.from_user.id
-    if not c_session.respond and user_id != c_session.overlord:
+    if not c_session.respond:
         return False
 
     if not await check_group(update, context) or not await rate_limit(update, context):

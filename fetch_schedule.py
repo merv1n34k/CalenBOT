@@ -263,10 +263,12 @@ def form_schedule(text, week=None, day_index=None, lesson_index=None,
                             string += f"\t{text.phone}: {teacher_phone}"
                     teacher_details.append(string)
 
-                output += f"\t*{timestamp}:* {subject} ({lesson_type})\n"
+                output += f"\t`{timestamp}: {subject} ({lesson_type})`\n"
                 if include_links and lesson_link:
                     output += f"{text.link}: {lesson_link}\n"
                 for detail in teacher_details:
-                    output += f"\t-\t_{detail}_\n"
+                    output += f"\t\t\t-\t_{detail}_\n"
 
-    return output if output else False
+            output += "\n"
+
+    return output if output else ""
