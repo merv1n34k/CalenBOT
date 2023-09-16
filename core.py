@@ -12,6 +12,7 @@ bot.
 import asyncio
 from datetime import datetime, timedelta
 import argparse
+import sys
 
 # Importing Project-specific modules
 
@@ -205,8 +206,13 @@ async def schedule_all(update: Update, context: CallbackContext) -> None:
         info = True
     else:
         info = False
+    all = config.form_message(4,link=info,info=info).split("%%")
     await context.bot.send_message(update.effective_chat.id,
-                                   config.form_message(4,link=info,info=info),
+                                   all[0],
+                                   disable_web_page_preview=True,
+                                   parse_mode='Markdown')
+    await context.bot.send_message(update.effective_chat.id,
+                                   all[1],
                                    disable_web_page_preview=True,
                                    parse_mode='Markdown')
 
@@ -258,6 +264,7 @@ def main() -> None:
 
     if args.fill_none_values:
         config.fill_none_values()
+        sys.exit()
 
     app = Application.builder().token(config.AUTH_TOKEN).build()
 
