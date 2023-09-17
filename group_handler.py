@@ -1,15 +1,14 @@
-"""
-Text
-"""
 
 import sqlite3
 from logger import log_action as log
 
-# Create a new SQLite database and table
-conn = sqlite3.connect('data/group_data.db')
+# Constant for the database path
+DB_PATH = 'data/calenbot.db'
+
+# Initialize SQLite database and tables
+conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
-# Create table for approved_groups
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS approved_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -18,60 +17,67 @@ CREATE TABLE IF NOT EXISTS approved_groups (
 );
 ''')
 
-# Create table for removed_data
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS removed_data (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_name TEXT UNIQUE,
-    group_data TEXT
-);
-''')
-
-# Commit changes
 conn.commit()
 
-# Function to add a group to approved_groups
-def add_new_group(group_name, group_data=None):
+def add_group(group_name, group_data=None):
+    """
+    Add a new group to the approved_groups table.
+
+    Parameters:
+        group_name (str): The name of the group.
+        group_data (str, optional): Additional data related to the group.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
     try:
         cursor.execute("INSERT INTO approved_groups (group_name, group_data) VALUES (?, ?)", (group_name, group_data))
         conn.commit()
-        log("group_handler", f"Added group {group_name} to approved_groups.")
+        # Replace log with your actual logging function
+        log("group handler", f"Added group {group_name} to approved_groups.")
     except sqlite3.IntegrityError:
-        log("group_handler", "Group with this name already exists in approved_groups. No changes made.")
+        log("group handler", "Group with this name already exists in approved_groups. No changes made.")
 
-# Function to remove a group from approved_groups and move it to removed_data
-def remove_approved_group(group_name):
-    # First, fetch the data for the group to be removed
-    cursor.execute("SELECT group_data FROM approved_groups WHERE group_name = ?", (group_name,))
-    group_data = cursor.fetchone()
+    conn.close()
 
-    if group_data is not None:
-        # Delete the group from approved_groups
+def remove_group(group_name):
+    """
+    Remove a group from the approved_groups table.
+
+    Parameters:
+        group_name (str): The name of the group to be removed.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Check if the group exists
+    cursor.execute("SELECT COUNT(*) FROM approved_groups WHERE group_name = ?", (group_name,))
+    group_exists = cursor.fetchone()[0] > 0
+
+    if group_exists:
         cursor.execute("DELETE FROM approved_groups WHERE group_name = ?", (group_name,))
-
-        # Add the group to removed_data
-        try:
-            cursor.execute("INSERT INTO removed_data (group_name, group_data) VALUES (?, ?)", (group_name, group_data[0]))
-            log("group_handler", f"Moved group {group_name} to removed_data.")
-        except sqlite3.IntegrityError:
-            log("group_handler", "Group with this name already exists in removed_data. Overwriting existing entry.")
-            cursor.execute("UPDATE removed_data SET group_data = ? WHERE group_name = ?", (group_data[0], group_name))
-
         conn.commit()
+        # Replace log with your actual logging function
+        log("group_handler", f"Removed group {group_name} from approved_groups.")
     else:
-        log("group_handler", "Group not found in approved_groups. No changes made.")
+        log("group_handler", f"Group {group_name} does not exist in approved_groups. No changes made.")
 
-# Function to get data from approved_groups as a dictionary
-def get_approved_groups():
+    conn.close()
+
+def get_groups_as_dict():
+    """
+    Fetch all approved groups as a dictionary.
+
+    Returns:
+        dict: A dictionary with group names as keys and group data as values.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
     cursor.execute("SELECT group_name, group_data FROM approved_groups")
     rows = cursor.fetchall()
-    approved_groups_dict = {}
-    for row in rows:
-        group_name, group_data = row
-        approved_groups_dict[group_name] = group_data
-    return approved_groups_dict
 
-# Close the database connection if needed
-def close_connection():
     conn.close()
-    log("group_handler", "Database connection closed.")
+
+    return {group_name: group_data for group_name, group_data in rows}
+

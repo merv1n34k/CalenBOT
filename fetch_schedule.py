@@ -3,7 +3,19 @@ from bs4 import BeautifulSoup
 import sqlite3
 from collections import OrderedDict
 
-conn = sqlite3.connect('data/schedule.db')
+DB_PATH = 'data/calenbot.db'
+# Constants for table indices
+ID_INDEX = 0
+SUBJECT_INDEX = 1
+TYPE_INDEX = 2
+LINK_INDEX = 3
+TEACHER_ID_INDEX = 4
+TIMESTAMP_INDEX = 1
+WEEKDAY_INDEX = 2
+WEEK_NUMBER_INDEX = 4
+
+
+conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 cursor.execute('''
@@ -38,230 +50,252 @@ CREATE TABLE IF NOT EXISTS schedule (
 
 conn.close()
 
+
 def check_none_values(table_name):
-    conn = sqlite3.connect('data/schedule.db')
+    """
+    Checks for None values in a SQLite table and prompts the user to fill them.
+
+    Parameters:
+        table_name (str): Name of the table to check.
+
+    Returns:
+        None
+    """
+    # Initialize SQLite connection
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
+    # Fetch all rows from the table
     cursor.execute(f"SELECT * FROM {table_name}")
     rows = cursor.fetchall()
     description = cursor.description
 
-    # Dictionary to keep track of rows with None values for each column
+    # Dictionary to track rows with None values
     none_values_dict = {}
 
-    # Keep track of identical lesson rows
-    ident_rows = []
-
+    # Iterate through rows to find None values
     for row in rows:
-        for i, field in enumerate(row[1:], start=1):  # Skip the id column
+        for i, field in enumerate(row[1:], start=1):  # Skip the 'id' column
             if field is None:
                 column_name = description[i][0]
-                row_id = row[0]  # Assuming the id is the first column
+                row_id = row[ID_INDEX]
+
+                # Create a unique key based on table type
                 if table_name == "lessons":
-                    subject = row[1]
-                    type_ = row[2]
-                    key = (subject, type_)
-                    if column_name in none_values_dict and key in ident_rows:
-                        none_values_dict[column_name].append(row_id)
-                    else:
-                        none_values_dict[column_name] = [row_id]
-                        ident_rows.append(key)
-
+                    subject = row[SUBJECT_INDEX]
+                    type_ = row[TYPE_INDEX]
                     info = f"{subject} ({type_})"
+                    key = (subject, type_)
                 else:
-                    info = row[1]
+                    key = row[SUBJECT_INDEX]  # Assuming the second column is unique in other tables
+                    info = key
 
-                    if column_name in none_values_dict:
-                        none_values_dict[column_name].append(row_id)
-                    else:
-                        none_values_dict[column_name] = [row_id]
+                # Initialize dictionary for a new unique key
+                if key not in none_values_dict:
+                    none_values_dict[key] = {'info': info, 'columns': {}}
 
-    # Iterate through columns that have None values
-    for column_name, row_ids in none_values_dict.items():
-        new_value = input(f"Enter value for {column_name} in {table_name} for {info}: ")
+                # Initialize list for a new column with None values
+                if column_name not in none_values_dict[key]['columns']:
+                    none_values_dict[key]['columns'][column_name] = []
 
-        if not new_value or new_value.strip() == "":
-            continue
+                # Add row ID to the corresponding column
+                none_values_dict[key]['columns'][column_name].append(row_id)
 
-        for row_id in row_ids:
-            cursor.execute(
-                f"UPDATE {table_name} SET {column_name} = ? WHERE id = ?",
-                (new_value, row_id)
-            )
+    # Prompt the user to fill None values and update the table
+    for key, details in none_values_dict.items():
+        info = details['info']
+        for column_name, row_ids in details['columns'].items():
+            new_value = input(f"Enter value for {column_name} in {table_name} for {info}: ")
 
-        # Commit changes to the database
-        conn.commit()
+            if not new_value or new_value.strip() == "":
+                continue
 
+            for row_id in row_ids:
+                cursor.execute(
+                    f"UPDATE {table_name} SET {column_name} = ? WHERE id = ?",
+                    (new_value, row_id)
+                )
+
+            # Commit changes to the database
+            conn.commit()
+
+    # Close the SQLite connection
     conn.close()
 
 def extract_and_save_schedule(url, table_ids, lesson_types):
+    """
+    Extracts schedule information from a URL and saves it to an SQLite database.
+
+    Parameters:
+        url (str): The URL to scrape.
+        table_ids (list): List of table IDs to look for in the HTML.
+        lesson_types (list): List of lesson types to consider.
+
+    Returns:
+        None
+    """
     try:
         response = requests.get(url)
     except ConnectionError:
-        print("Connection error, couldn't update the scedule")
+        print("Connection error, couldn't update the schedule")
         return
+
     html = response.text
     soup = BeautifulSoup(html, 'html.parser')
 
-    conn = sqlite3.connect('data/schedule.db')
+    # Initialize SQLite connection
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
+    # Iterate through each table ID
     for table_id in table_ids:
         table = soup.find('table', {'id': table_id})
         rows = table.find_all('tr')
         header = [td.text.strip() for td in rows[0].find_all('td')][1:]
-
         week_number = 1 if "First" in table_id else 2
 
+        # Iterate through each row in the table
         for row in rows[1:]:
             row_data = [td for td in row.find_all('td')]
             timestamp = row_data[0].text.strip()[1:]
             weekdays_data = row_data[1:]
 
+            # Iterate through each weekday
             for i, day in enumerate(header):
                 cell_content = weekdays_data[i]
 
-                # Check if cell is empty
+                # Skip empty cells
                 if not cell_content.text.strip():
                     continue
 
+                # Extract and validate subject
                 subject_span = cell_content.find('span', {'class': 'disLabel'})
                 if subject_span:
                     subject = subject_span.text.strip()
                 else:
-                    continue  # Skip this cell if subject is not found
+                    continue  # Skip if subject is not found
 
-                # Extract teacher names from 'a' tags that are not inside 'span'
-
+                # Extract teacher names
                 teacher_elements = [a for a in cell_content.find_all('a', {'class': 'plainLink'}) if not a.find_parent('span')]
-                teacher_names = [elem.text.strip() for elem in teacher_elements if all(word not in elem.text for word in lesson_types)] #
+                teacher_names = [elem.text.strip() for elem in teacher_elements if all(word not in elem.text for word in lesson_types)]
 
-                # Extract type of lesson
-                type_element = cell_content.find('a', string=lambda x: any(word in x for word in ["Лек", "Прак", "Лаб"]))
+                # Extract and validate type of lesson
+                type_element = cell_content.find('a', string=lambda x: any(word in x for word in lesson_types))
                 if type_element:
-                    for keyword in lesson_types:
-                        if keyword in type_element.text:
-                            type_of_lesson = keyword
-                            break
+                    type_of_lesson = next((keyword for keyword in lesson_types if keyword in type_element.text), None)
                 else:
-                    # Fallback to text search if type is not in a tag
-                    for keyword in lesson_types:
-                        if keyword in cell_content.text:
-                            type_of_lesson = keyword
-                            break
+                    type_of_lesson = next((keyword for keyword in lesson_types if keyword in cell_content.text), None)
 
-                # Insert or Update teacher info
+                # Insert or update teacher information
                 teacher_ids = []
                 for teacher_name in teacher_names:
                     cursor.execute("INSERT OR IGNORE INTO teachers (name) VALUES (?)", (teacher_name,))
                     cursor.execute("SELECT id FROM teachers WHERE name = ?", (teacher_name,))
-                    teacher_ids.append(cursor.fetchone()[0])
+                    teacher_ids.append(cursor.fetchone()[ID_INDEX])
 
-                # Insert into lessons table
+                # Insert or ignore lesson information
                 cursor.execute("""
                     INSERT OR IGNORE INTO lessons (subject, type, link, teacher_id)
                     VALUES (?, ?, ?, ?)
                 """, (subject, type_of_lesson, None, ','.join(map(str, teacher_ids))))
 
-                # Get the id of the lesson that was just inserted or already existed
-                cursor.execute("SELECT id FROM lessons WHERE subject = ? AND type = ? AND teacher_id = ?", (subject, type_of_lesson, ','.join(map(str, teacher_ids))))
-                lesson_id = cursor.fetchone()[0]
+                # Retrieve the lesson ID
+                cursor.execute("SELECT id FROM lessons WHERE subject = ? AND type = ? AND teacher_id = ?",
+                               (subject, type_of_lesson, ','.join(map(str, teacher_ids))))
+                lesson_id = cursor.fetchone()[ID_INDEX]
 
-                # Insert into schedule table
+                # Insert or ignore schedule information
                 cursor.execute("""
                     INSERT OR IGNORE INTO schedule (timestamp, weekday, lesson_id, week_number)
                     VALUES (?, ?, ?, ?)
                 """, (timestamp, day, lesson_id, week_number))
 
+        # Commit changes to the database
         conn.commit()
 
+    # Close SQLite connection
     conn.close()
+
+def fetch_data_as_dict(table_name, key_index=ID_INDEX):
+    """
+    Fetches all rows from an SQLite table and converts them to a dictionary.
+
+    Parameters:
+        table_name (str): The name of the table to fetch from.
+        key_index (int): The index of the column to use as the dictionary key.
+
+    Returns:
+        dict: The fetched data in dictionary form.
+    """
+    data_dict = {}
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT * FROM {table_name}")
+    rows = cursor.fetchall()
+    description = cursor.description  # This will contain column names
+    conn.close()
+
+    column_names = [column[0] for column in description]
+
+    for row in rows:
+        key = row[key_index]
+        # Create a dictionary for each row
+        row_dict = {column_names[i]: value for i, value in enumerate(row)}
+        data_dict[key] = row_dict
+
+    return data_dict
 
 def fetch_schedule_as_dict(days_order):
-    # Initialize the schedule dictionary
+    """
+    Fetches the schedule from the SQLite database and returns it as an ordered dictionary.
+
+    Parameters:
+        days_order (list): The desired order of weekdays.
+
+    Returns:
+        OrderedDict: The schedule data, organized by week number and weekday.
+    """
     schedule_dict = OrderedDict()
-
-    # Define the desired order of weekdays
     weekday_order = days_order
+    schedule_data = fetch_data_as_dict('schedule')
 
-    # Connect to the SQLite database
-    conn = sqlite3.connect('data/schedule.db')
-    cursor = conn.cursor()
+    for _, row_dict in schedule_data.items():
+        timestamp = row_dict['timestamp']
+        weekday = row_dict['weekday']
+        lesson_id = row_dict['lesson_id']
+        week_number = row_dict['week_number']
 
-    # Execute query to fetch all data from the 'schedule' table
-    cursor.execute("SELECT * FROM schedule")
-    rows = cursor.fetchall()
-
-    conn.close()
-
-    # Populate the schedule dictionary
-    for row in rows:
-        id, timestamp, weekday, lesson_id, week_number = row
-
-        # Initialize week if not already in the schedule
         if week_number not in schedule_dict:
             schedule_dict[week_number] = OrderedDict((day, {}) for day in weekday_order)
 
-        # Initialize weekday if not already in the week
         if weekday not in schedule_dict[week_number]:
             schedule_dict[week_number][weekday] = {}
 
-        # Insert the lesson into the schedule
         schedule_dict[week_number][weekday][timestamp] = lesson_id
 
     return schedule_dict
 
-def fetch_lessons_as_dict():
-    lessons_dict = {}
-
-    # Connect to the SQLite database
-    conn = sqlite3.connect('data/schedule.db')
-    cursor = conn.cursor()
-
-    # Execute query to fetch all data from the 'lessons' table
-    cursor.execute("SELECT * FROM lessons")
-    rows = cursor.fetchall()
-
-    # Close the database connection
-    conn.close()
-
-    # Convert rows to a dictionary
-    for row in rows:
-        id, subject, lesson_type, link, teacher_id = row
-        lessons_dict[id] = {'subject': subject, 'type': lesson_type, 'link':link, 'teacher_id': teacher_id}
-
-    return lessons_dict
-
-def fetch_teachers_as_dict():
-    teachers_dict = {}
-
-    # Connect to the SQLite database
-    conn = sqlite3.connect('data/schedule.db')
-    cursor = conn.cursor()
-
-    # Execute query to fetch all data from the 'teachers' table
-    cursor.execute("SELECT * FROM teachers")
-    rows = cursor.fetchall()
-
-    # Close the database connection
-    conn.close()
-
-    # Convert rows to a dictionary
-    for row in rows:
-        id, name, email, phone = row
-        teachers_dict[id] = {'name': name, 'email': email, 'phone': phone}
-
-    return teachers_dict
-
-# Function to print schedule, using lessons dictionary to look up lesson data
 def form_schedule(text, week=None, day_index=None, lesson_index=None,
                   include_teacher_info=False, include_links=True):
+    """
+    Formats the schedule data as a string, optionally filtering by week, day, and lesson index.
+
+    Parameters:
+        text (object): An object containing text templates and other contextual information.
+        week (int, optional): The week number to filter by.
+        day_index (int, optional): The index of the day to filter by.
+        lesson_index (int, optional): The index of the lesson to filter by.
+        include_teacher_info (bool, optional): Whether to include teacher contact information.
+        include_links (bool, optional): Whether to include lesson links.
+
+    Returns:
+        str: The formatted schedule data.
+    """
     schedule_dict = fetch_schedule_as_dict(text.weekdays)
-    lessons_dict = fetch_lessons_as_dict()
-    teachers_dict = fetch_teachers_as_dict()
+    lessons_dict = fetch_data_as_dict('lessons')
+    teachers_dict = fetch_data_as_dict('teachers')
 
     output = ""
-
     weekday_list = text.weekdays
     timestamp_list = text.timestamps
 
@@ -270,14 +304,22 @@ def form_schedule(text, week=None, day_index=None, lesson_index=None,
             continue
 
         for weekday, day_data in week_data.items():
-            if day_index is not None and weekday != weekday_list[day_index]:
-                continue
+            if day_index is not None:
+                if day_index in range(5):
+                    if weekday != weekday_list[day_index]:
+                        continue
+                else:
+                    return ""
 
             output += f"*{weekday} ({text.week} {week_number}):*\n"
 
             for timestamp, lesson_id in day_data.items():
-                if lesson_index is not None and timestamp != timestamp_list[lesson_index]:
-                    continue
+                if lesson_index is not None:
+                    if lesson_index in range(6):
+                        if timestamp != timestamp_list[lesson_index]:
+                            continue
+                    else:
+                        return ""
                 lesson_data = lessons_dict.get(lesson_id, {})
                 subject = lesson_data.get('subject', 'N/A')
                 lesson_type = lesson_data.get('type', 'N/A')
@@ -305,8 +347,7 @@ def form_schedule(text, week=None, day_index=None, lesson_index=None,
 
                 output += f"\t*{timestamp}:* `{subject} ({lesson_type})`\n"
                 if include_links and lesson_link:
-                    output += f"{text.link}: {lesson_link}\n"
-                    print(lesson_link)
+                    output += f"\t\t\t-\t*{text.link}:* {lesson_link}\n"
                 for detail in teacher_details:
                     output += f"\t\t\t-\t_{detail}_\n"
 

@@ -4,19 +4,22 @@ A telegram bot for groups to send repetitive scheduled messages, such as your un
 
 ## Requirements
 
-1. First thing you need is to activate a telegram bot in Telegram's main bot - [@BotFather](https://telegram.me/BotFather)
+1. First thing you need is to create and activate a telegram bot in Telegram's main bot - [@BotFather](https://telegram.me/BotFather)
+    * If you're not familiar how to work with `@BotFather` take a look at [this](https://core.telegram.org/bots/tutorial) Telegram's official guide.
 
-2. To run this telegram bot, you will need:
+2. This bot has following requirements:
 
     * [Python](https://www.python.org/) >=3.8
     * [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) >= 20.0.0 (You can use only 20+ versions!) - asynchronous interface for the Telegram Bot API, written in Python
         * [JobQueue](https://docs.python-telegram-bot.org/en/v20.5/telegram.ext.jobqueue.html) - python-telegram-bot dependency for running scheduled commands
+    * [requests](https://requests.readthedocs.io/en/latest/) - an elegant and simple HTTP library for Python, built for human beings.
+    * [beautifulsoup4](https://pypi.org/project/beautifulsoup4/) - a library that makes it easy to scrape information from web pages.
 
 ## How to use
 
-To make this bot work in groups you will need to add your bot as administrator of the group and it should have permission to send messages.
+To make this bot work in groups you will need to add your bot as administrator of the group and it should have permission to *send* and *delete* messages.
 
-To activate bot you should have a `config.py` file with all required parameters (see [config](##config)) and run the following command (example for *NIX systems):
+To activate bot you should have a `config.py` file with all required parameters (see [config](#config)) and run the following command (example for *NIX systems):
 
 ```bash
 python core.py [-f or --fill-none-values]
@@ -24,17 +27,26 @@ python core.py [-f or --fill-none-values]
 
 where option `-f` is a short version of `--fill-none-values`, which will prompt to fill missing values for some schedule info, such as links or teacher's info.
 
+After that, if you want to add particular group to _approved groups_ i.e. groups that can use this bot you need to:
+
+1. be at least a member of this group
+2. In this group send `/enable` command which will activate bot.
+3. It is also recommended to send `/commands` command that will update BotMenuButtom, where you can see all bot's commands by pressing `/`.
+4. Your bot is set. Users can send bot their commands, admins can control bot's behavior and _You_, as an owner of the bot, have all the commands + commands to enable/disable this bot in group + start/stop scheduler
+
 ## Config
 
-All configuration should be done in a `config.py` file, see `example_config.py` where you can simply put your desired values, or use default ones. So, to set up configuration on *NIX systems you can run:
+***ATTENTION!!!*** This bot was made specifically for certain website html structure, if you want to use this bot for your own purpose you may need to adapt `extract_and_save_schedule` to your website. I might add a more user friendly way to handle this issue
+
+All configuration should be done in a `config.py` file, see `example_config.py` where you can simply put your desired values, or use default ones. So, to create configuration file on *NIX systems you can run:
 
 ```bash
 cp example_config.py config.py
 ```
 
-And set all your configs in this file. In particural, for this bot to work you must provide the following values:
+And set all your configs in this file. In particular, for this bot to work you *must* provide the following values:
 * AUTH_TOKEN: your bot token
-* ADMIN_USER_ID: the user_id of a person who may control the bot or list of users
+* OVERLORD_USER_ID: the user_id of a person who may control the bot
 * URL: the url for the website with your schedule in <table> tags
 
 Other parameters are set by default, but you can change them if you need to. (see `example_config.py` for all available parameters)
@@ -45,13 +57,21 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## ROADMAP
 
-* [X] make a proper format messages
-* [X] fix scheduler and user commands
-* [ ] fix `check_none` function
-* [ ] add welcome message
-* [ ] add option to specify multiple admins
-* [ ] update `fetch_schedule`, so it is less prone to errors
-* [ ] make custom menu commands for admins
-* [ ] make group-broad request limits
-* [ ] CLEANUP, REFACTORING and DOCUMENTATION
+* *Version 3.14* (HERE)
+    * [X] make a proper format messages
+    * [X] fix scheduler and user commands
+    * [X] fix `check_none` function
+    * [X] add welcome message
+    * [X] add option to specify multiple admins
+    * [X] update `fetch_schedule`, so it is less prone to errors
+    * [X] make custom menu commands for admins
+    * [X] make group-broad request limits
+    * [X] Bot should remove previous bot messages
+    * [X] CLEANUP, REFACTORING and DOCUMENTATION
+
+* *Version 3.141*
+    * [ ] add option to disable/enable lessons
+    * [ ] update `<table>` tag parser so correctly extract info from most structures
+
+
 
