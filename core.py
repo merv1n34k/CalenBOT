@@ -33,7 +33,7 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
     raise RuntimeError(
         f"This bot is not compatible with your current PTB version {TG_VER}."
     )
-from telegram import Update, BotCommand, BotCommandScopeChatAdministrators, BotCommandScopeChatMember
+from telegram import Update, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -99,6 +99,14 @@ async def addcommands(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
 
     # Common commands for administrators
+    user_commands = [
+        BotCommand("now", "Print current lesson info"),
+        BotCommand("today", "Print a schedule today"),
+        BotCommand("week", "Print a schedule for this week"),
+        BotCommand("all","Print a complete schedule")
+    ]
+
+    # Common commands for administrators
     admin_commands = [
         BotCommand("now", "Print current lesson info"),
         BotCommand("today", "Print a schedule today"),
@@ -122,8 +130,10 @@ async def addcommands(update: Update, context: CallbackContext) -> None:
     ]
 
     # Set commands for chat administrators
+    scope_users = BotCommandScopeChat(chat_id)
     scope_admins = BotCommandScopeChatAdministrators(chat_id)
     scope_overlord  = BotCommandScopeChatMember(chat_id, c_session.overlord)
+    await context.bot.set_my_commands(user_commands, scope=scope_user)
     await context.bot.set_my_commands(admin_commands, scope=scope_admins)
     await context.bot.set_my_commands(overlord_commands, scope=scope_overlord)
 
