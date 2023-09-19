@@ -1,21 +1,17 @@
 """This is the core of the bot. It launches the app,
 maintain handlers and first to interact with the user.
-First, it starts the db_controller, then launches the app.
-
-Send anything to initiate the bot.
 
 Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
 
 # Importing General modules
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from collections import deque
 import argparse
 import sys
 
 # Importing Project-specific modules
-
 from logger import log_action as log
 import config
 import group_handler
@@ -33,7 +29,13 @@ if __version_info__ < (20, 0, 0, "alpha", 1):
     raise RuntimeError(
         f"This bot is not compatible with your current PTB version {TG_VER}."
     )
-from telegram import Update, BotCommand, BotCommandScopeChat, BotCommandScopeChatAdministrators, BotCommandScopeChatMember
+from telegram import (
+    Update,
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeChatAdministrators,
+    BotCommandScopeChatMember
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -45,187 +47,232 @@ from telegram.ext import (
 
 parser = argparse.ArgumentParser(description="There should be a help intro.",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument("-f", "--fill-none-values", action="store_true", help="update db with new values")
-
+parser.add_argument("-f", "--fill-none-values", action="store_true",
+                    help="update db with new values")
 args = parser.parse_args()
+
+
+# Constants
+MESSAGE_NOW = 0
+MESSAGE_TODAY = 1
+MESSAGE_WEEK = 2
+MESSAGE_ALL = 3
+
+# Define common, admin, and overlord commands
+COMMON_COMMANDS = [
+    BotCommand("now", "Показати яка зараз пара та наступну"),
+    BotCommand("today", "Показати розклад на цей день"),
+    BotCommand("week", "Показати розклад на цей тиждень"),
+    BotCommand("all", "Показати повний розклад")
+]
+
+ADMIN_COMMANDS = COMMON_COMMANDS + [
+    BotCommand("verbose", "Показувати більше/менше інформації у розкладах"),
+    BotCommand("deaf", "Дозволити/заборонити учасникам працювати з ботом")
+]
+
+OVERLORD_COMMANDS = ADMIN_COMMANDS + [
+    BotCommand("enable", "Let this group use the bot"),
+    BotCommand("disable", "Forbid use of the bot for this group"),
+    BotCommand("start_scheduler", "Start schedule"),
+    BotCommand("stop_scheduler", "Stop schedule"),
+    BotCommand("start", "Welcome message"),
+    BotCommand("autodelete", "Create a job to delete bot messages and user commands")
+]
 
 class BotSession:
     def __init__(self):
-        self.overlord = config.OVERLORD_USER_ID
+        self.overlord = config.OVERLORD_USER_ID  # Admin user ID
+        self.text = config.TEXT  # Text templates for bot messages
 
+        # Deque to hold timestamps for rate-limiting
         self.global_time_stamps = deque()
-        self.scheduled_job = None
-        self.request_time = config.REQUEST_TIME
-        self.max_request = config.MAX_REQUEST
-        self.start = config.START
-        self.interval = config.INTERVAL
-        self.end = config.END
 
-        self.respond = True # Do not respond to user requests
-        self.use_info = False # Print extra info for each schedule requests
+        self.scheduled_jobs = None  # Holds the scheduled job objects
+        self.request_time = config.REQUEST_TIME  # Time window for rate-limiting
+        self.max_request = config.MAX_REQUEST  # Max requests in time window
 
-        self.current_group = None
-        self.last_bot_message_id = None
-        self.last_user_message_id = None
+        # Scheduler settings
+        self.start = config.START  # Scheduler start time
+        self.interval = config.INTERVAL  # Scheduler interval
+        self.end = config.END  # Scheduler end time
 
+        self.respond = True  # Toggle for bot to respond to user requests
+        self.use_info = False  # Toggle for extra info in scheduled requests
+        self.autodelete = False # Toggle to automatically delete message
+        self.autodelete_job = None
+        self.autodelete_interval = config.AUTODELETE
 
-    def get_chat_id(self, chat_id = None):
-        # If chat_id in group_data then return it,
-        # else return False
-        chat_id = chat_id if chat_id else str(self.current_group)
-        #print(chat_id)
-        group_db = group_handler.get_groups_as_dict()
-        if str(chat_id) not in group_db.keys():
+        self.chat_info = {} # Store all chat info for future use
+        self.bot_message_ids = []  # Store bot's message IDs for deletion
+        self.user_message_ids = []  # Store user's message IDs for deletion
+
+    def get_chat_id(self, chat_id=None):
+        # Get the chat ID, default to current group if not specified
+        chat_id = chat_id if chat_id else str(self.chat_info["chat_id"])
+
+        # Fetch group data from database
+        group_dict = group_handler.get_groups_as_dict()
+
+        # Check if chat ID exists in group data
+        if str(chat_id) not in group_dict.keys():
             return False
-        self.current_group = chat_id
-        return self.current_group
 
-c_session = BotSession()
+        # Set current group chat ID
+        self.chat_info["chat_id"] = chat_id
+        return chat_id
 
-# Helper functions
+session = BotSession()
 
-async def start(update: Update, context: CallbackContext) -> None:
-    if str(update.effective_user.id) != c_session.overlord:
-        await unknown(update, context)
-        return
-    await context.bot.send_message(update.effective_chat.id, config.get_welcome_message(),
-        disable_web_page_preview=True,
-        parse_mode='MarkdownV2')
 
-async def addcommands(update: Update, context: CallbackContext) -> None:
-    if str(update.effective_user.id) != c_session.overlord:
-        await unknown(update, context)
-        return
+
+######################################################################
+###################### Helper functions ##############################
+######################################################################
+
+# Convert time string to datetime.time object with UTC offset
+def get_time_with_utc_offset(time_str: str, utc_offset: int) -> time:
+    """Convert time string to datetime.time with UTC offset."""
+    parsed_time = datetime.strptime(time_str, "%H:%M").time()
+    today = datetime.utcnow().date()
+    combined_time = datetime.combine(today, parsed_time)
+    offset_time = (combined_time + timedelta(hours=utc_offset)).time()
+    return offset_time
+
+# Get chat info like chat_id, user_id, message_id, and chat_admins
+async def get_chat_info(update: Update, context: CallbackContext) -> None:
+    """Retrieve essential chat information."""
     chat_id = update.effective_chat.id
+    chat_admins = await context.bot.get_chat_administrators(chat_id)
 
-    # Common commands for administrators
-    user_commands = [
-        BotCommand("now", "Print current lesson info"),
-        BotCommand("today", "Print a schedule today"),
-        BotCommand("week", "Print a schedule for this week"),
-        BotCommand("all","Print a complete schedule")
-    ]
+    session.chat_info = {
+        'chat_id': chat_id,
+        'chat_admins': chat_admins
+    }
 
-    # Common commands for administrators
-    admin_commands = [
-        BotCommand("now", "Print current lesson info"),
-        BotCommand("today", "Print a schedule today"),
-        BotCommand("week", "Print a schedule for this week"),
-        BotCommand("all","Print a complete schedule"),
-        BotCommand("verbose", "Toggle printing more info"),
-        BotCommand("deaf", "Toggle bot response to user requests"),
-    ]
-
-    overlord_commands = [
-        BotCommand("now", "Print current lesson info"),
-        BotCommand("today", "Print a schedule today"),
-        BotCommand("week", "Print a schedule for this week"),
-        BotCommand("all","Print a complete schedule"),
-        BotCommand("verbose", "Verbose mode"),
-        BotCommand("deaf", "Deaf mode"),
-        BotCommand("enable", "Let this group use the bot"),
-        BotCommand("disable", "Forbit use of the bot for this group"),
-        BotCommand("start_scheduler", "Start schedule"),
-        BotCommand("stop_scheduler", "Stop schedule")
-    ]
-
-    # Set commands for chat administrators
-    scope_users = BotCommandScopeChat(chat_id)
-    scope_admins = BotCommandScopeChatAdministrators(chat_id)
-    scope_overlord  = BotCommandScopeChatMember(chat_id, c_session.overlord)
-    await context.bot.set_my_commands(user_commands, scope=scope_user)
-    await context.bot.set_my_commands(admin_commands, scope=scope_admins)
-    await context.bot.set_my_commands(overlord_commands, scope=scope_overlord)
-
-    log("bot handler",'Commands added for administrators.')
-
-async def is_admin(update: Update, context: CallbackContext) -> bool:
-    """Check if the user is an admin in the group."""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+# Check if a user is an admin in the group
+def is_admin(user_id, chat_admins) -> bool:
+    """Check if user is an admin."""
     try:
-        chat_admins = await context.bot.get_chat_administrators(chat_id)
-        admin_ids = [admin.user.id for admin in chat_admins]
-        return user_id in admin_ids
+        return user_id in [admin.user.id for admin in chat_admins]
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"Error: {e}")
         return False
 
-async def check_group(chat_id: int) -> bool:
-    """Check if the user belongs to an authorized group."""
-    if not c_session.get_chat_id(chat_id):
-        return False
-    return True
+# Check if the chat_id belongs to an authorized group
+def check_group(chat_id: int) -> bool:
+    """Verify if chat is authorized."""
+    return bool(session.get_chat_id(chat_id))
 
-async def rate_limit() -> bool:
-    """Rate limit requests globally."""
+# Implement rate limiting for bot requests
+def rate_limit() -> bool:
+    """Global rate limiting."""
     now = datetime.now()
-
-    # Remove timestamps older than the rate-limiting window
-    while c_session.global_time_stamps and now - global_time_stamps[0] > timedelta(minutes=c_session.request_time):
-        global_time_stamps.popleft()
-
-    # Check if rate limit has been exceeded
-    if len(global_time_stamps) >= c_session.max_request:
+    time_limit = timedelta(minutes=session.request_time)
+    while session.global_time_stamps and now - session.global_time_stamps[0] > time_limit:
+        session.global_time_stamps.popleft()
+    if len(session.global_time_stamps) >= session.max_request:
         return False
-
-    # Add the current timestamp
-    global_time_stamps.append(now)
-
+    session.global_time_stamps.append(now)
     return True
 
-async def handle_message(update: Update, context: CallbackContext) -> bool:
+# Handle incoming messages and perform checks
+def handle_message(user_id: int, chat_id: int, chat_admins: tuple) -> bool:
     """Handle incoming messages and perform necessary checks."""
-    chat_id = update.message.chat_id
 
-    if await is_admin(update, context):
-        return True
-    if not c_session.respond:
-        return False
+    # If the user is an admin, no further checks are needed
+    if not is_admin(user_id, chat_admins):
+        # If the bot is set to not respond, exit early
+        if not session.respond:
+            return False
 
-    if not await check_group(chat_id):
-        await context.bot.send_message(update.effective_chat.id, "You're not authorized to use this bot.")
-        return False
+        # Check if the chat is authorized
+        if not check_group(chat_id):  # Removed 'await' as check_group is not async
+            return "auth"
 
-    if not await rate_limit():
-        await context.bot.send_message(update.effective_chat.id, "Rate limit exceeded. Please wait.")
-        return False
+        # Check for rate limiting
+        if not rate_limit():  # Removed 'await' as rate_limit is not async
+            return "limit"
+
     return True
 
-async def unknown(update: Update, context: CallbackContext) -> None:
-    """Notify that entered command in unknown."""
-    if not await handle_message(update, context):
-        return
-    await context.bot.send_message(update.effective_chat.id,
-        text="Sorry, I didn't understand that command.")
+async def error_respond_message(context: CallbackContext, type_: str) -> None:
+    """Send message to notify about certain error or restriction"""
+    if type_ == "auth":
+        await context.bot.send_message(session.chat_info['chat_id'], session.text.no_auth)
+    elif type_ == "limit":
+        await context.bot.send_message(session.chat_info['chat_id'], session.text.request_limit)
 
-async def delete_message(context: CallbackContext, chat_id: int):
-    # Delete bot's last message if it exists
-    if c_session.last_bot_message_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=c_session.last_bot_message_id)
-        except Exception as e:
-            log("bot handler", f"Failed to delete user's last command message: {e}")
+# Notify for unknown commands
+async def unknown(update: Update, context: CallbackContext):
+    """Handle unknown commands."""
+    return await context.bot.send_message(update.effective_chat.id,
+                                   text=session.text.unknown_command)
 
-    # Delete user's last command message if it exists
-    if c_session.last_user_message_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=c_session.last_user_message_id)
-        except Exception as e:
-            log("bot handler", f"Failed to delete user's last command message: {e}")
+# Delete bot and user messages
+async def delete_message(context: CallbackContext):
+    """Delete bot and user messages."""
+    for msg_list in [session.bot_message_ids, session.user_message_ids]:
+        while msg_list:
+            msg_id = msg_list.pop(0)
+            try:
+                await context.bot.delete_message(session.chat_info['chat_id'], msg_id)
+            except Exception as e:
+                log("bot handler", f"Failed to delete message: {e}")
+                break
+    log("bot handler", "Finished deleting messages")
 
-# Admin functions
-
-async def toggle_state(state: bool) -> bool:
-    """Toggle the state of a boolean variable."""
+# Toggle boolean state
+def toggle_state(state: bool) -> bool:
+    """Toggle boolean state."""
     return not state
 
-async def manage_group(update: Update, context: CallbackContext, action: str) -> None:
-    """General function to add or remove a group."""
-    if str(update.message.from_user.id) != c_session.overlord:
+
+
+
+######################################################################
+###################### Admin only functions ##########################
+######################################################################
+
+######################### OVERLORD ONLY ##############################
+
+# Start command for the bot
+async def start(update: Update, context: CallbackContext) -> None:
+    """Send a welcome message if the user is the overlord."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
+    if str(update.effective_user.id) != session.overlord:
         await unknown(update, context)
         return
+    await context.bot.send_message(
+        update.effective_chat.id, config.get_welcome_message(),
+        disable_web_page_preview=True, parse_mode='MarkdownV2'
+    )
 
+# Add commands for different user roles
+async def addcommands(update: Update, context: CallbackContext) -> None:
+    """Add bot commands for users, admins, and the overlord."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
+    if str(update.effective_user.id) != session.overlord:
+        await unknown(update, context)
+        return
+    chat_id = update.effective_chat.id
+
+    # Set commands for different scopes
+    await context.bot.set_my_commands(COMMON_COMMANDS, scope=BotCommandScopeChat(chat_id))
+    await context.bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChatAdministrators(chat_id))
+    await context.bot.set_my_commands(OVERLORD_COMMANDS, scope=BotCommandScopeChatMember(chat_id, session.overlord))
+    log("bot handler", 'Commands added for administrators.')
+
+# General function to manage groups
+async def manage_group(update: Update, context: CallbackContext, action: str) -> None:
+    """Add or remove a group based on the action."""
+    if str(update.message.from_user.id) != session.overlord:
+        await unknown(update, context)
+        return
     chat_id = update.message.chat_id
 
     if action == "add":
@@ -233,99 +280,266 @@ async def manage_group(update: Update, context: CallbackContext, action: str) ->
     elif action == "remove":
         group_handler.remove_group(chat_id)
 
+# Add a group
 async def add_group(update, context):
-    """Add a group."""
+    """Wrapper for adding a group."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await manage_group(update, context, "add")
 
+# Remove a group
 async def remove_group(update, context):
-    """Remove a group."""
+    """Wrapper for removing a group."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await manage_group(update, context, "remove")
 
-async def toggle_respond(update: Update, context: CallbackContext) -> None:
-    if not await is_admin(update, context):
+async def toggle_autodeletion(update: Update, context: CallbackContext) -> None:
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
+    """Toggle the verbosity of the bot."""
+    if str(update.message.from_user.id) != session.overlord:
         await unknown(update, context)
         return
 
-    c_session.respond = toggle_state(c_session.respond)
-    status = "undeafed" if c_session.respond else "deafed"
-    log("bot handler", f"Admin has {status} user respond")
+    if session.autodelete is None:
+        session.autodelete = []
 
-async def toggle_info(update: Update, context: CallbackContext) -> None:
-    if not await is_admin(update, context):
-        await unknown(update, context)
-        return
-
-    c_session.use_info = toggle_state(c_session.use_info)
-    status = "verbose" if c_session.use_info else "no info"
-    log("bot handler", f"Admin has toggled {status} mode")
-
-# Managing scheduler
+    # Toggle autodelete
+    session.autodelete = toggle_state(session.autodelete)
+    status = "enabled" if session.autodelete else "disabled"
+    if session.autodelete:
+        if not session.autodelete_job:
+            session.autodelete_job = context.job_queue.run_repeating(
+                        delete_message,
+                        first=0,
+                        interval=session.autodelete_interval,
+            )
+    else:
+        try:
+            session.autodelete_job.schedule_removal()
+        except Exception as e:
+            log("bot handler", f"Failed to remove autodelete job: {e}")
+    log("bot handler", f"Admin has {status} autodelete mode")
 
 async def manage_scheduler(update: Update, context: CallbackContext, action: str) -> None:
     """General function to start or stop the scheduler based on the action parameter."""
-    if not await is_admin(update, context):
+    if str(update.message.from_user.id) != session.overlord:
         await unknown(update, context)
         return
-    c_session.current_group = update.message.chat_id
 
+    # Required for callback_send_message
+    if not session.chat_info:
+        await get_chat_info(update, context)
+
+    # Initialize scheduled_job list if it doesn't exist
+    if session.scheduled_jobs is None:
+        session.scheduled_jobs = []
+
+    # If scheduler was launched after start time, start scheduler one minute later
     if action == "start":
-        if c_session.scheduled_job is None:
-            c_session.scheduled_job = context.job_queue.run_repeating(
-                callback_send_message,
-                first=0,#datetime.strptime(c_session.start, '%H:%M').time(),
-                interval=10,#c_session.interval,
-                #last=datetime.strptime(c_session.end, '%H:%M').time()
-            )
-            log("bot handler", "Admin has started a scheduler")
+        if not session.scheduled_jobs:
+            initial_first = get_time_with_utc_offset(session.start, -3)
+            interval = session.interval
+            last = get_time_with_utc_offset(session.end, -3).replace(tzinfo=None)
+
+            # Create datetime objects for better comparison
+            today = datetime.now().date()
+            now = datetime.now().time()
+            now_with_offset = get_time_with_utc_offset(now.strftime("%H:%M"), -3)
+            now_datetime = datetime.combine(today, now_with_offset).replace(tzinfo=None)
+            first_datetime = datetime.combine(today, initial_first).replace(tzinfo=None)
+            last_datetime = datetime.combine(today, last).replace(tzinfo=None)
+
+            if first_datetime < now_datetime < last_datetime:
+                log("bot handler","Admin launched scheduler later then excpected!")
+                first_datetime = now_datetime + timedelta(minutes=1)
+                first = first_datetime.time()
+                log("bot_handler",f"New first time for today: {first}")
+
+                job_today = context.job_queue.run_repeating(
+                    callback_send_message,
+                    first=first,
+                    last=last,
+                    interval=interval,
+                )
+                session.scheduled_jobs.append(job_today)
+                log("bot handler", "Admin has started a scheduler for today")
+
+                # Set it to start the next day with the initial value
+                first_datetime = datetime.combine(today + timedelta(days=1), initial_first)
+                first = first_datetime.time()
+                log("bot_handler",f"First time for next day: {first}")
+
+                # Schedule job for the next day
+                job_next_day = context.job_queue.run_repeating(
+                    callback_send_message,
+                    first=first,
+                    interval=interval,
+                )
+                session.scheduled_jobs.append(job_next_day)
+                log("bot handler", "Admin has scheduled a job for the next day")
+            elif now_datetime < last_datetime:
+                log("bot handler","Admin launched scheduler after the end of today's schedule!")
+                # Set it to start the next day with the initial value
+                first_datetime = datetime.combine(today + timedelta(days=1), initial_first)
+                first = first_datetime.time()
+                log("bot_handler",f"First time for next day: {first}")
+
+                # Schedule job for the next day
+                job_next_day = context.job_queue.run_repeating(
+                    callback_send_message,
+                    first=first,
+                    interval=interval,
+                )
+                session.scheduled_jobs.append(job_next_day)
+                log("bot handler", "Admin has scheduled a job for the next day")
+            else:
+                # Regular scheduling logic
+                job_regular = context.job_queue.run_repeating(
+                    callback_send_message,
+                    first=initial_first,
+                    interval=interval,
+                )
+                session.scheduled_jobs.append(job_regular)
+                log("bot handler", "Admin has started a scheduler")
         else:
             log("bot handler", "Scheduler is already running.")
     elif action == "stop":
-        if c_session.scheduled_job is not None:
-            c_session.scheduled_job.schedule_removal()
-            c_session.scheduled_job = None
-            log("bot handler", "Admin has stopped a scheduler")
-        else:
+        if not session.scheduled_jobs:
             log("bot_handler", "Scheduler is not running.")
+            return
+        while session.scheduled_jobs:
+            scheduled_job = session.scheduled_jobs.pop(0)
+            try:
+                scheduled_job.schedule_removal()
+            except Exception as e:
+                log("bot handler", f"Failed to remove a job: {e}")
+        log("bot handler", "Admin has stopped a scheduler")
 
 async def start_scheduler(update: Update, context: CallbackContext) -> None:
     """Start the scheduler."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await manage_scheduler(update, context, "start")
 
 async def stop_scheduler(update: Update, context: CallbackContext) -> None:
     """Stop the scheduler."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await manage_scheduler(update, context, "stop")
 
 async def callback_send_message(context: CallbackContext) -> None:
     """Reply with info about the current lesson."""
-    chat_id = c_session.get_chat_id()
+    chat_id = session.get_chat_id()
     if not chat_id:
         return
 
-    info = c_session.use_info  # This seems to be a boolean, so should be directly usable.
-    message = config.form_message(MESSAGE_NOW, link=True, info=info, return_false=True)
+    info = session.use_info  # This seems to be a boolean, so should be directly usable.
+    message = config.form_message(MESSAGE_NOW, link=True, info=info,
+                                  return_false=True, callback_message=True)
     if not message:
         return
 
-    await context.bot.send_message(
+    sent_message = await context.bot.send_message(
         chat_id,
         message,
         disable_web_page_preview=True,
         parse_mode='Markdown'
     )
 
-# All Schedule commands
-MESSAGE_NOW = 0
-MESSAGE_TODAY = 1
-MESSAGE_WEEK = 2
-MESSAGE_ALL = 3
+    # Store the bot's message ID for future deletion
+    session.bot_message_ids.append(sent_message.message_id)
+
+########################## ALL ADMINS ################################
+
+async def toggle_respond(update: Update, context: CallbackContext) -> None:
+    """Toggle the bot's ability to respond."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
+    # Retrieve chat and user information
+    if not session.chat_info:
+        await get_chat_info(update, context)
+
+    chat_id = session.chat_info['chat_id']
+    chat_admins = session.chat_info['chat_admins']
+    user_id = update.effective_user.id
+
+    # Check if the user is an admin
+    if is_admin(user_id, chat_admins):
+        # Retrieve the text and status for the deaf mode
+        text, off, on = session.text.deaf_mode
+        session.respond = toggle_state(session.respond)
+        status = (on, "enabled") if not session.respond else (off, "disabled")
+        sent_message = await context.bot.send_message(chat_id,
+                                                      f"{text} {status[0]}")
+        log("bot handler", f"Admin has {status[1]} deaf mode")
+    else:
+        sent_message = await unknown(update, context)
+
+    # Store the bot's message ID for future deletion
+    session.bot_message_ids.append(sent_message.message_id)
+
+async def toggle_info(update: Update, context: CallbackContext) -> None:
+    """Toggle the verbosity of the bot."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
+    # Retrieve chat and user information
+    if not session.chat_info:
+        await get_chat_info(update, context)
+
+    chat_id = session.chat_info['chat_id']
+    chat_admins = session.chat_info['chat_admins']
+    user_id = update.effective_user.id
+
+    # Check if the user is an admin
+    if is_admin(user_id, chat_admins):
+        # Retrieve the text and status for verbose mode
+        text, off, on = session.text.verbose_mode
+        session.use_info = toggle_state(session.use_info)
+        status = (on, "enabled") if session.use_info else (off, "disabled")
+        sent_message = await context.bot.send_message(chat_id,
+                                                      f"{text} {status[0]}")
+        log("bot handler", f"Admin has {status[1]} verbose mode")
+    else:
+        sent_message = await unknown(update, context)
+
+    # Store the bot's message ID for future deletion
+    session.bot_message_ids.append(sent_message.message_id)
+
+### Managing scheduler
+
+######################################################################
+########################### USER functions ###########################
+######################################################################
 
 async def send_schedule_message(update: Update, context: CallbackContext, message_type: int) -> None:
     """General function to handle sending schedule messages."""
-    if not await handle_message(update, context):
+    # Retrieve chat and user information
+    if not session.chat_info:
+        await get_chat_info(update, context)
+
+    chat_id = session.chat_info['chat_id']
+    chat_admins = session.chat_info['chat_admins']
+    user_id = update.effective_user.id
+
+    handled_message = handle_message(user_id=user_id,chat_id=chat_id, chat_admins=chat_admins)
+
+    if not handled_message:
         return
-    info = c_session.use_info  # This appears to be a boolean, so it should be directly usable
+    elif handled_message in ("auth", "limit"):
+        await error_respond_message(context, handled_message)
+
+    info = session.use_info  # This appears to be a boolean, so it should be directly usable
     message = config.form_message(message_type, link=info, info=info)
-    chat_id = update.effective_chat.id
+    message_ids = []
 
     if message_type == MESSAGE_ALL:
         week_messages = message.split("%%")
@@ -333,78 +547,79 @@ async def send_schedule_message(update: Update, context: CallbackContext, messag
             sent_message = await context.bot.send_message(chat_id, msg,
                                            disable_web_page_preview=True,
                                            parse_mode='Markdown')
+            message_ids.append(sent_message.message_id)
     else:
         sent_message = await context.bot.send_message(chat_id, message,
                                        disable_web_page_preview=True,
                                        parse_mode='Markdown')
-    await delete_message(context,chat_id)
+        message_ids.append(sent_message.message_id)
+
     # Store the current message_ids for future deletion
-    c_session.last_bot_message_id = sent_message.message_id
+    session.bot_message_ids = session.bot_message_ids + message_ids
 
 async def schedule_now(update: Update, context: CallbackContext) -> None:
     """Reply info about the current lesson."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await send_schedule_message(update, context, MESSAGE_NOW)
-    c_session.last_user_message_id = update.message.message_id
 
 async def schedule_today(update: Update, context: CallbackContext) -> None:
     """Reply info about today's lessons."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await send_schedule_message(update, context, MESSAGE_TODAY)
-    c_session.last_user_message_id = update.message.message_id
 
 async def schedule_this_week(update: Update, context: CallbackContext) -> None:
     """Reply info about this week's lessons."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await send_schedule_message(update, context, MESSAGE_WEEK)
-    c_session.last_user_message_id = update.message.message_id
 
 async def schedule_all(update: Update, context: CallbackContext) -> None:
     """Reply info about all lessons."""
+    # Store the user's message ID for future deletion
+    session.user_message_ids.append(update.message.message_id)
+
     await send_schedule_message(update, context, MESSAGE_ALL)
-    c_session.last_user_message_id = update.message.message_id
 
-# Main function
 
-def main() -> None:
+###############
+#MAIN#FUNCTION#
+###############
 
+def main():
+    """Main function"""
     if args.fill_none_values:
         config.fill_none_values()
         sys.exit()
 
     app = Application.builder().token(config.AUTH_TOKEN).build()
 
-    # Instance handlers
-    unknown_handler = MessageHandler(filters.COMMAND, unknown)
-    sch_now_handler = CommandHandler("now", schedule_now)
-    sch_today_handler = CommandHandler("today", schedule_today)
-    sch_this_week_handler = CommandHandler("week", schedule_this_week)
-    toggle_respond_handler = CommandHandler("deaf", toggle_respond)
-    toggle_info_handler = CommandHandler("verbose", toggle_info)
-    add_group_handler = CommandHandler("enable", add_group)
-    remove_group_handler = CommandHandler("disable", remove_group)
-    start_scheduler_handler = CommandHandler("start_scheduler",start_scheduler)
-    stop_scheduler_handler = CommandHandler("stop_scheduler",stop_scheduler)
-    add_commands_handler = CommandHandler('commands', addcommands)
-    sch_all_handler = CommandHandler("all", schedule_all)
-    start_handler = CommandHandler("start",start)
+    # Handlers
+    handlers = [
+        CommandHandler("now", schedule_now),
+        CommandHandler("today", schedule_today),
+        CommandHandler("week", schedule_this_week),
+        CommandHandler("deaf", toggle_respond),
+        CommandHandler("verbose", toggle_info),
+        CommandHandler("enable", add_group),
+        CommandHandler("disable", remove_group),
+        CommandHandler("start_scheduler", start_scheduler),
+        CommandHandler("stop_scheduler", stop_scheduler),
+        CommandHandler("all", schedule_all),
+        CommandHandler('commands', addcommands),
+        CommandHandler("start", start),
+        CommandHandler("autodelete",toggle_autodeletion),
+        MessageHandler(filters.COMMAND, unknown)  # This must be the last handler
+    ]
 
-    # Add handlers
-    app.add_handler(sch_now_handler)
-    app.add_handler(sch_today_handler)
-    app.add_handler(sch_this_week_handler)
-    app.add_handler(toggle_respond_handler)
-    app.add_handler(toggle_info_handler)
-    app.add_handler(add_group_handler)
-    app.add_handler(remove_group_handler)
-    app.add_handler(start_scheduler_handler)
-    app.add_handler(stop_scheduler_handler)
-    app.add_handler(sch_all_handler)
-    app.add_handler(add_commands_handler)
-    app.add_handler(start_handler)
-
-    # This must be the last handler!!!!!
-    app.add_handler(unknown_handler)
+    for handler in handlers:
+        app.add_handler(handler)
 
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-

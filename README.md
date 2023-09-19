@@ -17,6 +17,8 @@ A telegram bot for groups to send repetitive scheduled messages, such as your un
 
 ## How to use
 
+First thing to do is to `git clone` this repository, from which you should run the main python script, conveniently named `core.py`.
+
 To make this bot work in groups you will need to add your bot as administrator of the group and it should have permission to *send* and *delete* messages.
 
 To activate bot you should have a `config.py` file with all required parameters (see [config](#config)) and run the following command (example for *NIX systems):
@@ -68,10 +70,15 @@ Distributed under the MIT License. See `LICENSE` for more information.
     * [X] make group-broad request limits
     * [X] Bot should remove previous bot messages
     * [X] CLEANUP, REFACTORING and DOCUMENTATION
+    * [X] Create a unified checker for users,admin,overlord outside a
+    * [X] Fix scheduler launch by datetime object
+    * [X] Show correct lesson on breaks
 
 * *Version 3.141*
     * [ ] add option to disable/enable lessons
     * [ ] update `<table>` tag parser so correctly extract info from most structures
+    * [ ] make a correction for UTC offset in config (for now it only works for UTC+03:00)
+    * [ ] admins can control bot from private chats
 
 
 

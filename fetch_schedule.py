@@ -2,6 +2,8 @@ import requests
 from bs4 import BeautifulSoup
 import sqlite3
 from collections import OrderedDict
+from logger import log_action as log
+
 
 DB_PATH = 'data/calenbot.db'
 # Constants for table indices
@@ -135,9 +137,9 @@ def extract_and_save_schedule(url, table_ids, lesson_types):
         None
     """
     try:
-        response = requests.get(url)
-    except ConnectionError:
-        print("Connection error, couldn't update the schedule")
+        response = requests.get(url, timeout=5)
+    except requests.exceptions.Timeout:
+        log("Schedule Handler","Connection error, couldn't update the schedule")
         return
 
     html = response.text
@@ -311,6 +313,9 @@ def form_schedule(text, week=None, day_index=None, lesson_index=None,
                 else:
                     return ""
 
+            if lesson_index is not None and lesson_index >= len(day_data):
+                return ""
+
             output += f"*{weekday} ({text.week} {week_number}):*\n"
 
             for timestamp, lesson_id in day_data.items():
@@ -320,6 +325,7 @@ def form_schedule(text, week=None, day_index=None, lesson_index=None,
                             continue
                     else:
                         return ""
+
                 lesson_data = lessons_dict.get(lesson_id, {})
                 subject = lesson_data.get('subject', 'N/A')
                 lesson_type = lesson_data.get('type', 'N/A')
@@ -349,7 +355,7 @@ def form_schedule(text, week=None, day_index=None, lesson_index=None,
                 if include_links and lesson_link:
                     output += f"\t\t\t-\t*{text.link}:* {lesson_link}\n"
                 for detail in teacher_details:
-                    output += f"\t\t\t-\t_{detail}_\n"
+                    output += f"\t\t\t-\t{detail}\n"
 
             output += "\n"
 
