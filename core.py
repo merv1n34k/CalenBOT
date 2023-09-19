@@ -181,7 +181,8 @@ def handle_message(user_id: int, chat_id: int, chat_admins: tuple) -> bool:
     """Handle incoming messages and perform necessary checks."""
 
     # If the user is an admin, no further checks are needed
-    if not is_admin(user_id, chat_admins):
+    if is_admin(user_id, chat_admins):
+
         # If the bot is set to not respond, exit early
         if not session.respond:
             return False
@@ -199,9 +200,9 @@ def handle_message(user_id: int, chat_id: int, chat_admins: tuple) -> bool:
 async def error_respond_message(context: CallbackContext, type_: str) -> None:
     """Send message to notify about certain error or restriction"""
     if type_ == "auth":
-        await context.bot.send_message(session.chat_info['chat_id'], session.text.no_auth)
+        return await context.bot.send_message(session.chat_info['chat_id'], session.text.no_auth)
     elif type_ == "limit":
-        await context.bot.send_message(session.chat_info['chat_id'], session.text.request_limit)
+        return await context.bot.send_message(session.chat_info['chat_id'], session.text.request_limit)
 
 # Notify for unknown commands
 async def unknown(update: Update, context: CallbackContext):
@@ -243,7 +244,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     session.user_message_ids.append(update.message.message_id)
 
     if str(update.effective_user.id) != session.overlord:
-        await unknown(update, context)
+        session.bot_message_ids.append((await unknown(update, context)).message_id)
         return
     await context.bot.send_message(
         update.effective_chat.id, config.get_welcome_message(),
@@ -257,7 +258,7 @@ async def addcommands(update: Update, context: CallbackContext) -> None:
     session.user_message_ids.append(update.message.message_id)
 
     if str(update.effective_user.id) != session.overlord:
-        await unknown(update, context)
+        session.bot_message_ids.append((await unknown(update, context)).message_id)
         return
     chat_id = update.effective_chat.id
 
@@ -271,7 +272,7 @@ async def addcommands(update: Update, context: CallbackContext) -> None:
 async def manage_group(update: Update, context: CallbackContext, action: str) -> None:
     """Add or remove a group based on the action."""
     if str(update.message.from_user.id) != session.overlord:
-        await unknown(update, context)
+        session.bot_message_ids.append((await unknown(update, context)).message_id)
         return
     chat_id = update.message.chat_id
 
@@ -302,7 +303,7 @@ async def toggle_autodeletion(update: Update, context: CallbackContext) -> None:
 
     """Toggle the verbosity of the bot."""
     if str(update.message.from_user.id) != session.overlord:
-        await unknown(update, context)
+        session.bot_message_ids.append((await unknown(update, context)).message_id)
         return
 
     if session.autodelete is None:
@@ -328,7 +329,7 @@ async def toggle_autodeletion(update: Update, context: CallbackContext) -> None:
 async def manage_scheduler(update: Update, context: CallbackContext, action: str) -> None:
     """General function to start or stop the scheduler based on the action parameter."""
     if str(update.message.from_user.id) != session.overlord:
-        await unknown(update, context)
+        session.bot_message_ids.append((await unknown(update, context)).message_id)
         return
 
     # Required for callback_send_message
@@ -467,23 +468,30 @@ async def toggle_respond(update: Update, context: CallbackContext) -> None:
     if not session.chat_info:
         await get_chat_info(update, context)
 
+
     chat_id = session.chat_info['chat_id']
     chat_admins = session.chat_info['chat_admins']
     user_id = update.effective_user.id
 
-    # Check if the user is an admin
-    if is_admin(user_id, chat_admins):
-        # Retrieve the text and status for the deaf mode
-        text, off, on = session.text.deaf_mode
-        session.respond = toggle_state(session.respond)
-        status = (on, "enabled") if not session.respond else (off, "disabled")
-        sent_message = await context.bot.send_message(chat_id,
-                                                      f"{text} {status[0]}")
-        log("bot handler", f"Admin has {status[1]} deaf mode")
-    else:
-        sent_message = await unknown(update, context)
+    if str(update.message.from_user.id) != session.overlord:
+        if not check_group(chat_id):
+            session.bot_message_ids.append((await error_respond_message(context,"auth")).message_id)
+            return False
 
-    # Store the bot's message ID for future deletion
+        # Check if the user is an admin
+        if not is_admin(user_id, chat_admins):
+            session.bot_message_ids.append((await unknown(update, context)).message_id)
+            return
+
+        # Retrieve the text and status for the deaf mode
+    text, off, on = session.text.deaf_mode
+    session.respond = toggle_state(session.respond)
+    status = (on, "enabled") if not session.respond else (off, "disabled")
+    sent_message = await context.bot.send_message(chat_id,
+                                                      f"{text} {status[0]}")
+    log("bot handler", f"Admin has {status[1]} deaf mode")
+
+        # Store the bot's message ID for future deletion
     session.bot_message_ids.append(sent_message.message_id)
 
 async def toggle_info(update: Update, context: CallbackContext) -> None:
@@ -499,17 +507,23 @@ async def toggle_info(update: Update, context: CallbackContext) -> None:
     chat_admins = session.chat_info['chat_admins']
     user_id = update.effective_user.id
 
-    # Check if the user is an admin
-    if is_admin(user_id, chat_admins):
-        # Retrieve the text and status for verbose mode
-        text, off, on = session.text.verbose_mode
-        session.use_info = toggle_state(session.use_info)
-        status = (on, "enabled") if session.use_info else (off, "disabled")
-        sent_message = await context.bot.send_message(chat_id,
+    if str(update.message.from_user.id) != session.overlord:
+        if not check_group(chat_id):
+            session.bot_message_ids.append((await error_respond_message(context,"auth")).message_id)
+            return False
+
+        # Check if the user is an admin
+        if not is_admin(user_id, chat_admins):
+            session.bot_message_ids.append((await unknown(update, context)).message_id)
+            return
+
+    # Retrieve the text and status for verbose mode
+    text, off, on = session.text.verbose_mode
+    session.use_info = toggle_state(session.use_info)
+    status = (on, "enabled") if session.use_info else (off, "disabled")
+    sent_message = await context.bot.send_message(chat_id,
                                                       f"{text} {status[0]}")
-        log("bot handler", f"Admin has {status[1]} verbose mode")
-    else:
-        sent_message = await unknown(update, context)
+    log("bot handler", f"Admin has {status[1]} verbose mode")
 
     # Store the bot's message ID for future deletion
     session.bot_message_ids.append(sent_message.message_id)
@@ -530,12 +544,20 @@ async def send_schedule_message(update: Update, context: CallbackContext, messag
     chat_admins = session.chat_info['chat_admins']
     user_id = update.effective_user.id
 
-    handled_message = handle_message(user_id=user_id,chat_id=chat_id, chat_admins=chat_admins)
+    if str(update.message.from_user.id) != session.overlord:
 
-    if not handled_message:
-        return
-    elif handled_message in ("auth", "limit"):
-        await error_respond_message(context, handled_message)
+        handled_message = handle_message(user_id=user_id,chat_id=chat_id, chat_admins=chat_admins)
+
+        if not check_group(chat_id):
+            session.bot_message_ids.append((await error_respond_message(context,"auth")).message_id)
+            return False
+
+        if not handled_message:
+            return
+
+        elif handled_message in ("auth", "limit"):
+            session.bot_message_ids.append((await error_respond_message(context, handled_message)).message_id)
+            return
 
     info = session.use_info  # This appears to be a boolean, so it should be directly usable
     message = config.form_message(message_type, link=info, info=info)

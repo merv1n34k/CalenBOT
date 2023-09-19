@@ -75,6 +75,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
     * [X] Show correct lesson on breaks
 
 * *Version 3.141*
+    * [ ] Add notification whether bot offline or online
     * [ ] add option to disable/enable lessons
     * [ ] update `<table>` tag parser so correctly extract info from most structures
     * [ ] make a correction for UTC offset in config (for now it only works for UTC+03:00)
