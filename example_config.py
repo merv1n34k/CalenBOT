@@ -9,7 +9,7 @@ AUTH_TOKEN = "YOUR TOKEN"
 # USER_ID of a person who control the bot
 OVERLORD_USER_ID = "YOUR ID"
 # Your schedule URL
-URL = "YOUR URL"
+URL = ""
 
 # Bot in group settings
 MAX_REQUEST = 3 # Max repeated requests for one user in REQUEST_TIME

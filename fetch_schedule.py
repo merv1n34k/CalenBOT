@@ -10,6 +10,7 @@ DB_PATH = 'data/calenbot.db'
 ID_INDEX = 0
 SUBJECT_INDEX = 1
 TYPE_INDEX = 2
+# The last 5 constants are unused, why?
 LINK_INDEX = 3
 TEACHER_ID_INDEX = 4
 TIMESTAMP_INDEX = 1

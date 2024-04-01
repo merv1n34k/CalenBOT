@@ -9,6 +9,7 @@ bot.
 from datetime import datetime, timedelta, time
 from collections import deque
 import argparse
+from functools import wraps
 import sys
 
 # Importing Project-specific modules
@@ -125,6 +126,36 @@ class BotSession:
 session = BotSession()
 
 
+######################################################################
+################## Instance permission decorators ####################
+######################################################################
+def overlord(func):
+    """Set permission only to overlord."""
+
+    @wraps(func)
+    def inner(*args, **kwargs):
+        if get_permission(kind = "overlord", *args):
+            return func(*args, **kwargs)
+    return inner
+
+def admin(func):
+    """Set permission to admins and overlord."""
+
+    @wraps(func)
+    def inner(*args, **kwargs):
+        if get_permission(kind = "admin", *args):
+            return func(*args, **kwargs)
+    return inner
+
+def user(func):
+    """Set permission to any user."""
+
+    @wraps(func)
+    def inner(*args, **kwargs):
+        if get_permission(kind = "user", *args):
+            return func(*args, **kwargs)
+    return inner
+
 
 ######################################################################
 ###################### Helper functions ##############################
@@ -165,6 +196,7 @@ def check_group(chat_id: int) -> bool:
     return bool(session.get_chat_id(chat_id))
 
 # Implement rate limiting for bot requests
+# make sure it works only for group and not in private chats!
 def rate_limit() -> bool:
     """Global rate limiting."""
     now = datetime.now()
@@ -175,6 +207,17 @@ def rate_limit() -> bool:
         return False
     session.global_time_stamps.append(now)
     return True
+
+# Implement hierarchy using get_permission function
+# must be used in any group/private chat
+def get_permission(kind: str, user_id: int, chat_id: int) -> bool:
+    """
+    Check the user accordingly to specified kind,
+    return True if permission is satisfied.
+    The function also checks for other limits,
+    such as rate limit, correct group, etc.
+    """
+    pass
 
 # Handle incoming messages and perform checks
 def handle_message(user_id: int, chat_id: int, chat_admins: tuple) -> bool:
@@ -371,33 +414,33 @@ async def manage_scheduler(update: Update, context: CallbackContext, action: str
                 log("bot handler", "Admin has started a scheduler for today")
 
                 # Set it to start the next day with the initial value
-                first_datetime = datetime.combine(today + timedelta(days=1), initial_first)
-                first = first_datetime.time()
-                log("bot_handler",f"First time for next day: {first}")
+#                first_datetime = datetime.combine(today + timedelta(days=1), initial_first)
+#                first = first_datetime.time()
+#                log("bot_handler",f"First time for next day: {first}")
 
                 # Schedule job for the next day
-                job_next_day = context.job_queue.run_repeating(
-                    callback_send_message,
-                    first=first,
-                    interval=interval,
-                )
-                session.scheduled_jobs.append(job_next_day)
-                log("bot handler", "Admin has scheduled a job for the next day")
-            elif now_datetime < last_datetime:
-                log("bot handler","Admin launched scheduler after the end of today's schedule!")
+#                job_next_day = context.job_queue.run_repeating(
+#                    callback_send_message,
+#                    first=first,
+#                    interval=interval,
+#                )
+#                session.scheduled_jobs.append(job_next_day)
+#                log("bot handler", "Admin has scheduled a job for the next day")
+#            elif now_datetime > last_datetime:
+#                log("bot handler","Admin launched scheduler after the end of today's schedule!")
                 # Set it to start the next day with the initial value
-                first_datetime = datetime.combine(today + timedelta(days=1), initial_first)
-                first = first_datetime.time()
-                log("bot_handler",f"First time for next day: {first}")
+#                first_datetime = datetime.combine(today + timedelta(days=1), initial_first)
+#                first = first_datetime.time()
+#                log("bot_handler",f"First time for next day: {first}")
 
                 # Schedule job for the next day
-                job_next_day = context.job_queue.run_repeating(
-                    callback_send_message,
-                    first=first,
-                    interval=interval,
-                )
-                session.scheduled_jobs.append(job_next_day)
-                log("bot handler", "Admin has scheduled a job for the next day")
+#                job_next_day = context.job_queue.run_repeating(
+#                    callback_send_message,
+#                    first=first,
+#                    interval=interval,
+#                )
+#                session.scheduled_jobs.append(job_next_day)
+#                log("bot handler", "Admin has scheduled a job for the next day")
             else:
                 # Regular scheduling logic
                 job_regular = context.job_queue.run_repeating(
