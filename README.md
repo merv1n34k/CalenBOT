@@ -64,8 +64,9 @@ Other parameters are set by default, but you can change them if you need to. (se
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
-## LICENSE
-Distributed under MIT License, see LICENSE.
+## Contribution
+
+Feel free to open an issue. PRs are also appreciated.
 
 ## ROADMAP
 
